@@ -100,7 +100,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen">
-      {/* Header */}
       <header className="border-b bg-white">
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between gap-3">
           <div>
@@ -133,7 +132,6 @@ export default function App() {
         </nav>
       </header>
 
-      {/* Content */}
       <main className="max-w-6xl mx-auto px-4 py-6">
         {tab === "inicio" && (
           <section className="grid md:grid-cols-3 gap-4">
@@ -258,8 +256,6 @@ export default function App() {
   );
 }
 
-/* ---- Formularios ---- */
-
 function EvaluationForm({ onSave }) {
   const [type, setType] = useState("Autoevaluación");
   const [scores, setScores] = useState({ productividad:3, colaboracion:3, bienestar:3, innovacion:3, ausentismo:3, cultura:3 });
@@ -344,4 +340,3 @@ function FeedbackSBI({ onSave }) {
   );
 }
 
-Actualización UI completa
