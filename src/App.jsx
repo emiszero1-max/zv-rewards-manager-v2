@@ -817,7 +817,7 @@ const progressMission = async (missionId) => {
       Completa al menos {WEEK_BONUS_MIN_COMPLETED} misiones por semana para ganar un bonus de {WEEK_BONUS_POINTS} pts al cierre.
     </div>
   </section>
-        )}
+)}
 
         {/* Ranking */}
         {tab === "ranking" && (
