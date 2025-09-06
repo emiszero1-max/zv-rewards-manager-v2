@@ -32,6 +32,40 @@ const isYesterdayLocal = (a, b) => {
   const d = new Date(yb);
   d.setDate(d.getDate() - 1);
   return toLocalYMD(ya) === toLocalYMD(d);
+  /** Helpers de semana (semana = lunes a domingo, deadline domingo 23:59:59) */
+const getWeekStart = (d) => {
+  const x = new Date(d); x.setHours(0,0,0,0);
+  const w = (x.getDay() + 6) % 7; // 0->Lunes ... 6->Domingo
+  x.setDate(x.getDate() - w);
+  return x;
+};
+const getWeekEnd = (d) => {
+  const start = getWeekStart(d);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 6);
+  end.setHours(23, 59, 59, 999);
+  return end;
+};
+const getWeekId = (d) => toLocalYMD(getWeekStart(d)); // usamos YYYY-MM-DD del lunes
+const msToParts = (ms) => {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const dd = Math.floor(s / 86400);
+  const hh = Math.floor((s % 86400) / 3600);
+  const mm = Math.floor((s % 3600) / 60);
+  const ss = s % 60;
+  return { dd, hh, mm, ss };
+};
+
+/** Plantilla de Misiones Semanales (AJUSTABLE) */
+const WEEK_MISSIONS_TPL = [
+  { id: "w1", title: "5S en estación",        desc: "Audita 1 estación con checklist 5S.",  kpi: "productividad", target: 1, progress: 0, points: 40, status: "Pendiente" },
+  { id: "w2", title: "Idea Kaizen",           desc: "Propón 2 mejoras de proceso.",         kpi: "innovacion",    target: 2, progress: 0, points: 60, status: "Pendiente" },
+  { id: "w3", title: "Apoyo entre áreas",     desc: "Colabora en 2 incidencias de QA.",     kpi: "colaboracion",  target: 2, progress: 0, points: 50, status: "Pendiente" },
+  { id: "w4", title: "Cero retardos",         desc: "Mantén 0 retardos en la semana.",      kpi: "ausentismo",    target: 1, progress: 0, points: 40, status: "Pendiente", auto: true },
+];
+const WEEK_BONUS_POINTS = 100;       // bonus al cerrar semana si completas >= MIN
+const WEEK_BONUS_MIN_COMPLETED = 3;  // mínimo de misiones completadas para bonus
+
 };
 
 // ---------- Constantes ----------
@@ -88,6 +122,8 @@ const DEFAULT_EMPLOYEES = {
     feedback: [],
     streak: 0,
     lastCheckIn: null,
+    missionsWeek: { weekId: null, list: [], history: [] },
+
   },
   maria: {
     profile: { name: "María López", role: "Gerente de Calidad", avatar: "🧑‍🔧" },
@@ -101,6 +137,8 @@ const DEFAULT_EMPLOYEES = {
     feedback: [],
     streak: 0,
     lastCheckIn: null,
+    missionsWeek: { weekId: null, list: [], history: [] },
+
   },
   jorge: {
     profile: { name: "Jorge Pérez", role: "Líder de Mantenimiento", avatar: "🧰" },
@@ -114,6 +152,8 @@ const DEFAULT_EMPLOYEES = {
     feedback: [],
     streak: 0,
     lastCheckIn: null,
+    missionsWeek: { weekId: null, list: [], history: [] },
+
   },
 };
 
@@ -139,6 +179,13 @@ export default function App() {
   const [theme, setTheme] = useState(() => {
     try { return localStorage.getItem(THEME_KEY) || "light"; } catch { return "light"; }
   });
+  // Reloj para countdown (1s)
+const [now, setNow] = useState(Date.now());
+useEffect(() => {
+  const t = setInterval(() => setNow(Date.now()), 1000);
+  return () => clearInterval(t);
+}, []);
+const currentWeekId = useMemo(() => getWeekId(new Date(now)), [now]);
   useEffect(() => {
     try {
       const root = document.documentElement;
@@ -196,6 +243,47 @@ export default function App() {
     if (n < 0) toast(`-${Math.abs(n)} pts`, { icon: "↩️" });
     if (leveledUp) { toast.success("¡Subiste de nivel! 🎉"); await shootConfetti(); }
   };
+// Inicializa la semana si hace falta
+const ensureWeekForUser = (user) => {
+  if (!user.missionsWeek) user.missionsWeek = { weekId: null, list: [], history: [] };
+  if (user.missionsWeek.weekId !== currentWeekId) {
+    // Cierre de semana anterior: calcula completadas y otorga bonus
+    if (user.missionsWeek.weekId) {
+      const completed = (user.missionsWeek.list || []).filter(m => m.progress >= m.target).length;
+      const closed = {
+        weekId: user.missionsWeek.weekId,
+        completed,
+        list: user.missionsWeek.list,
+        closedAt: new Date().toISOString(),
+        bonusGranted: completed >= WEEK_BONUS_MIN_COMPLETED
+      };
+      user.missionsWeek.history = Array.isArray(user.missionsWeek.history) ? user.missionsWeek.history : [];
+      user.missionsWeek.history.unshift(closed);
+      if (closed.bonusGranted) {
+        user.points = Math.max(0, user.points + WEEK_BONUS_POINTS);
+        user.level = Math.floor(user.points / 500) + 1;
+      }
+    }
+    // Nueva semana
+    user.missionsWeek.weekId = currentWeekId;
+    user.missionsWeek.list = deepClone(WEEK_MISSIONS_TPL);
+  }
+};
+
+// Asegurar al cargar y cuando cambie la semana o el usuario actual
+useEffect(() => {
+  setEmployees(prev => {
+    const next = deepClone(prev);
+    const u = next[currentId];
+    if (u) {
+      ensureWeekForUser(u);
+    }
+    return next;
+  });
+  // Avisos
+  toast.dismiss();
+  toast("Nueva semana preparada", { icon: "🗓️" });
+}, [currentWeekId, currentId]);
 
   const pushKpiSnapshot = () =>
     mutate((u) => {
@@ -221,7 +309,46 @@ export default function App() {
         u.kpis.cultura = clamp(u.kpis.cultura + 2, 0, 100);
         if (c.kpi === "innovacion" && !u.badges.includes("b1")) u.badges.push("b1");
       }
-    });
+      const progressMission = async (missionId) => {
+  let completedNow = false;
+  setEmployees(prev => {
+    const next = deepClone(prev);
+    const u = next[currentId];
+    ensureWeekForUser(u);
+    const m = u.missionsWeek.list.find(x => x.id === missionId);
+    if (!m) return prev;
+
+    if (m.auto) {
+      toast("Esta misión se evalúa automáticamente al cierre", { icon: "🤖" });
+      return prev;
+    }
+
+    if (m.progress >= m.target) return prev;
+    m.progress += 1;
+    if (m.progress >= m.target) {
+      m.status = "Completada";
+      completedNow = true;
+      // Impacto KPI ligero
+      const inc = m.kpi === "ausentismo" ? -3 : 3;
+      u.kpis[m.kpi] = clamp(u.kpis[m.kpi] + inc, 0, 100);
+      u.kpis.cultura = clamp(u.kpis.cultura + 1, 0, 100);
+      // Puntos por misión
+      u.points = Math.max(0, u.points + (m.points || 0));
+      u.level = Math.floor(u.points / 500) + 1;
+    } else {
+      m.status = "En progreso";
+    }
+    return next;
+  });
+  if (completedNow) {
+    toast.success("¡Misión completada!");
+    await shootConfetti();
+    pushKpiSnapshot();
+  } else {
+    toast("Progreso registrado");
+  }
+};
+    
     if (completed) {
       await addPoints(reward);
       pushKpiSnapshot();
@@ -415,6 +542,7 @@ export default function App() {
             { id: "sbi", label: "Feedback SBI" },
             { id: "analytics", label: "Analytics EPM" },
             { id: "ranking", label: "Ranking" }, // NUEVO
+      { id: "misiones", label: "Misiones" },
           ].map((t) => (
             <button
               key={t.id}
@@ -664,6 +792,18 @@ export default function App() {
             <div className="text-xs text-gray-500 dark:text-gray-400">Conectar a datos reales vía API/Firebase cuando esté listo.</div>
           </section>
         )}
+{tab === "misiones" && (
+  <section className="p-5 bg-white dark:bg-gray-950 rounded-2xl border border-gray-200 dark:border-gray-800 space-y-4">
+    <WeeklyMissions
+      me={me}
+      now={now}
+      onProgress={progressMission}
+    />
+    <div className="text-xs text-gray-500 dark:text-gray-400">
+      Completa al menos {WEEK_BONUS_MIN_COMPLETED} misiones por semana para ganar un bonus de {WEEK_BONUS_POINTS} pts al cierre.
+    </div>
+  </section>
+        )}
 
         {/* Ranking */}
         {tab === "ranking" && (
@@ -867,4 +1007,84 @@ function Leaderboard({ employees, currentId }) {
   );
 }
 
+function WeeklyMissions({ me, now, onProgress }) {
+  const end = getWeekEnd(new Date(now));
+  const left = msToParts(end - now);
+  const list = me?.missionsWeek?.list || [];
+  const completed = list.filter(m => m.progress >= m.target).length;
+
+  return (
+    <div>
+      <div className="flex flex-wrap items-center gap-3 mb-3">
+        <h3 className="font-semibold mr-auto">Misiones semanales</h3>
+        <span className="px-3 py-1 rounded-full border text-sm bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800">
+          Termina en: {left.dd}d {String(left.hh).padStart(2,"0")}:{String(left.mm).padStart(2,"0")}:{String(left.ss).padStart(2,"0")}
+        </span>
+        <span className="px-3 py-1 rounded-full border text-sm bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800">
+          Completadas: {completed}/{list.length}
+        </span>
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-3">
+        {list.map((m) => {
+          const pct = (m.progress / m.target) * 100;
+          const done = m.progress >= m.target;
+          return (
+            <div key={m.id} className="p-4 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="font-medium">{m.title}</div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400">{m.desc}</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="px-2 py-1 rounded-full text-xs border bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700">
+                    KPI: {KPI_LABEL[m.kpi]}
+                  </span>
+                  <span className="px-2 py-1 rounded-full text-xs border bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700">
+                    {m.points} pts
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-3">
+                <div className="w-full h-2 rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden">
+                  <div className="h-2 rounded-full bg-gray-900 dark:bg-white" style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} />
+                </div>
+                <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  {m.progress}/{m.target} · {done ? "Completada" : (m.status || "En progreso")}
+                </div>
+              </div>
+
+              <div className="mt-3 flex items-center gap-2">
+                <button
+                  onClick={() => onProgress(m.id)}
+                  disabled={done || m.auto}
+                  className={`px-3 py-2 rounded-lg text-sm border hover:bg-gray-50 dark:hover:bg-gray-800 ${done || m.auto ? "opacity-50 cursor-not-allowed" : ""}`}
+                >
+                  {m.auto ? "Automática" : "Progresar"}
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {Array.isArray(me?.missionsWeek?.history) && me.missionsWeek.history.length > 0 && (
+        <div className="mt-5">
+          <h4 className="font-medium mb-2">Semanas anteriores</h4>
+          <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-800 divide-y divide-gray-200 dark:divide-gray-800">
+            {me.missionsWeek.history.slice(0, 6).map((h) => (
+              <div key={h.weekId} className="px-4 py-3 bg-white dark:bg-gray-950 flex items-center justify-between">
+                <div className="text-sm">Semana {h.weekId} · Completadas: <b>{h.completed}</b></div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">
+                  {h.bonusGranted ? `Bonus +${WEEK_BONUS_POINTS} pts` : "Sin bonus"}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
