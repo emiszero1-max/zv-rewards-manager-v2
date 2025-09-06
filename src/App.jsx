@@ -293,29 +293,52 @@ useEffect(() => {
       if (u.kpiHistory.length > 20) u.kpiHistory.shift();
     });
 
-  const completeChallenge = async (id) => {
-    const reward = me.challenges.find((c) => c.id === id)?.reward || 0; // calcula antes
-    let completed = false;
-    mutate((u) => {
-      const c = u.challenges.find((x) => x.id === id);
-      if (!c || c.progress >= c.target) return;
-      c.progress += 1;
-      if (c.progress >= c.target) {
-        c.status = "Completado";
-        completed = true;
-        // === AJUSTE: impacto KPI por reto ===
-        const inc = c.kpi === "ausentismo" ? -5 : 5;
-        u.kpis[c.kpi] = clamp(u.kpis[c.kpi] + inc, 0, 100);
-        u.kpis.cultura = clamp(u.kpis.cultura + 2, 0, 100);
-        if (c.kpi === "innovacion" && !u.badges.includes("b1")) u.badges.push("b1");
-      }
-      const progressMission = async (missionId) => {
+ const completeChallenge = async (id) => {
+  const reward = me.challenges.find((c) => c.id === id)?.reward || 0;
+  let completed = false;
+
+  mutate((u) => {
+    const c = u.challenges.find((x) => x.id === id);
+    if (!c) return;
+
+    // si aún no había meta/porcentaje, progresamos una unidad
+    if (c.progress == null) c.progress = 0;
+    if (c.target == null) c.target = 1;
+
+    if (c.progress >= c.target) return; // ya estaba completado
+    c.progress += 1;
+
+    if (c.progress >= c.target) {
+      c.status = "Completado";
+      completed = true;
+
+      // Impacto KPI
+      const inc = c.kpi === "ausentismo" ? -5 : 5;
+      u.kpis[c.kpi] = clamp(u.kpis[c.kpi] + inc, 0, 100);
+      u.kpis.cultura = clamp(u.kpis.cultura + 2, 0, 100);
+
+      // Insignia por innovación
+      if (c.kpi === "innovacion" && !u.badges.includes("b1")) u.badges.push("b1");
+    } else {
+      c.status = "En progreso";
+    }
+  });
+
+  if (completed) {
+    await addPoints(reward);
+    pushKpiSnapshot();
+    toast.success("Reto completado");
+  } else {
+    toast("Progreso registrado");
+  }
+};
+const progressMission = async (missionId) => {
   let completedNow = false;
-  setEmployees(prev => {
+  setEmployees((prev) => {
     const next = deepClone(prev);
     const u = next[currentId];
     ensureWeekForUser(u);
-    const m = u.missionsWeek.list.find(x => x.id === missionId);
+    const m = u.missionsWeek.list.find((x) => x.id === missionId);
     if (!m) return prev;
 
     if (m.auto) {
@@ -325,14 +348,13 @@ useEffect(() => {
 
     if (m.progress >= m.target) return prev;
     m.progress += 1;
+
     if (m.progress >= m.target) {
       m.status = "Completada";
       completedNow = true;
-      // Impacto KPI ligero
       const inc = m.kpi === "ausentismo" ? -3 : 3;
       u.kpis[m.kpi] = clamp(u.kpis[m.kpi] + inc, 0, 100);
       u.kpis.cultura = clamp(u.kpis.cultura + 1, 0, 100);
-      // Puntos por misión
       u.points = Math.max(0, u.points + (m.points || 0));
       u.level = Math.floor(u.points / 500) + 1;
     } else {
@@ -340,6 +362,7 @@ useEffect(() => {
     }
     return next;
   });
+
   if (completedNow) {
     toast.success("¡Misión completada!");
     await shootConfetti();
@@ -347,16 +370,7 @@ useEffect(() => {
   } else {
     toast("Progreso registrado");
   }
-};
-    
-    if (completed) {
-      await addPoints(reward);
-      pushKpiSnapshot();
-      toast.success("Reto completado");
-    } else {
-      toast("Progreso registrado");
-    }
-  };
+}; 
 
   const createChallenge = (payload) =>
     mutate((u) => {
