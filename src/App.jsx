@@ -1,7 +1,8 @@
 // === ZV Rewards Manager - App.jsx (completo) ===
 // Incluye: selector evaluado, KPIs dinámicos, retos, recompensas,
 // evaluación, feedback SBI, gráficas (Recharts), modo oscuro, toasts,
-// confeti, racha diaria (streak) + badge "Constancia", leaderboard, export/import JSON.
+// confeti, racha diaria (streak) + badge "Constancia", leaderboard,
+// misiones semanales con bonus, export/import JSON.
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Toaster, toast } from "react-hot-toast";
@@ -32,7 +33,9 @@ const isYesterdayLocal = (a, b) => {
   const d = new Date(yb);
   d.setDate(d.getDate() - 1);
   return toLocalYMD(ya) === toLocalYMD(d);
-  /** Helpers de semana (semana = lunes a domingo, deadline domingo 23:59:59) */
+}; // <<--- cierre correcto
+
+/** Helpers de semana (semana = lunes a domingo, deadline domingo 23:59:59) */
 const getWeekStart = (d) => {
   const x = new Date(d); x.setHours(0,0,0,0);
   const w = (x.getDay() + 6) % 7; // 0->Lunes ... 6->Domingo
@@ -46,7 +49,7 @@ const getWeekEnd = (d) => {
   end.setHours(23, 59, 59, 999);
   return end;
 };
-const getWeekId = (d) => toLocalYMD(getWeekStart(d)); // usamos YYYY-MM-DD del lunes
+const getWeekId = (d) => toLocalYMD(getWeekStart(d));
 const msToParts = (ms) => {
   const s = Math.max(0, Math.floor(ms / 1000));
   const dd = Math.floor(s / 86400);
@@ -65,8 +68,6 @@ const WEEK_MISSIONS_TPL = [
 ];
 const WEEK_BONUS_POINTS = 100;       // bonus al cerrar semana si completas >= MIN
 const WEEK_BONUS_MIN_COMPLETED = 3;  // mínimo de misiones completadas para bonus
-
-};
 
 // ---------- Constantes ----------
 // === AJUSTES: Etiquetas de KPI ===
@@ -123,7 +124,6 @@ const DEFAULT_EMPLOYEES = {
     streak: 0,
     lastCheckIn: null,
     missionsWeek: { weekId: null, list: [], history: [] },
-
   },
   maria: {
     profile: { name: "María López", role: "Gerente de Calidad", avatar: "🧑‍🔧" },
@@ -138,7 +138,6 @@ const DEFAULT_EMPLOYEES = {
     streak: 0,
     lastCheckIn: null,
     missionsWeek: { weekId: null, list: [], history: [] },
-
   },
   jorge: {
     profile: { name: "Jorge Pérez", role: "Líder de Mantenimiento", avatar: "🧰" },
@@ -153,7 +152,6 @@ const DEFAULT_EMPLOYEES = {
     streak: 0,
     lastCheckIn: null,
     missionsWeek: { weekId: null, list: [], history: [] },
-
   },
 };
 
@@ -179,13 +177,15 @@ export default function App() {
   const [theme, setTheme] = useState(() => {
     try { return localStorage.getItem(THEME_KEY) || "light"; } catch { return "light"; }
   });
+
   // Reloj para countdown (1s)
-const [now, setNow] = useState(Date.now());
-useEffect(() => {
-  const t = setInterval(() => setNow(Date.now()), 1000);
-  return () => clearInterval(t);
-}, []);
-const currentWeekId = useMemo(() => getWeekId(new Date(now)), [now]);
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const currentWeekId = useMemo(() => getWeekId(new Date(now)), [now]);
+
   useEffect(() => {
     try {
       const root = document.documentElement;
@@ -211,8 +211,8 @@ const currentWeekId = useMemo(() => getWeekId(new Date(now)), [now]);
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(employees)); } catch {}
   }, [employees]);
 
-  // Nivelación: === AJUSTE: puntos por nivel ===
-  const nextLevelAt = useMemo(() => (me.level + 1) * 500, [me.level]); // cambia 500 si quieres subir/bajar dificultad
+  // Nivelación
+  const nextLevelAt = useMemo(() => (me.level + 1) * 500, [me.level]);
   const progressToNext = useMemo(() => clamp((me.points / nextLevelAt) * 100, 0, 100), [me.points, nextLevelAt]);
 
   const mutate = (fn) =>
@@ -236,54 +236,52 @@ const currentWeekId = useMemo(() => getWeekId(new Date(now)), [now]);
     mutate((u) => {
       const prevLevel = u.level;
       u.points = Math.max(0, u.points + n);
-      u.level = Math.floor(u.points / 500) + 1; // mismo 500 que arriba
+      u.level = Math.floor(u.points / 500) + 1;
       leveledUp = u.level > prevLevel;
     });
     if (n > 0) toast.success(`+${n} pts`);
     if (n < 0) toast(`-${Math.abs(n)} pts`, { icon: "↩️" });
     if (leveledUp) { toast.success("¡Subiste de nivel! 🎉"); await shootConfetti(); }
   };
-// Inicializa la semana si hace falta
-const ensureWeekForUser = (user) => {
-  if (!user.missionsWeek) user.missionsWeek = { weekId: null, list: [], history: [] };
-  if (user.missionsWeek.weekId !== currentWeekId) {
-    // Cierre de semana anterior: calcula completadas y otorga bonus
-    if (user.missionsWeek.weekId) {
-      const completed = (user.missionsWeek.list || []).filter(m => m.progress >= m.target).length;
-      const closed = {
-        weekId: user.missionsWeek.weekId,
-        completed,
-        list: user.missionsWeek.list,
-        closedAt: new Date().toISOString(),
-        bonusGranted: completed >= WEEK_BONUS_MIN_COMPLETED
-      };
-      user.missionsWeek.history = Array.isArray(user.missionsWeek.history) ? user.missionsWeek.history : [];
-      user.missionsWeek.history.unshift(closed);
-      if (closed.bonusGranted) {
-        user.points = Math.max(0, user.points + WEEK_BONUS_POINTS);
-        user.level = Math.floor(user.points / 500) + 1;
-      }
-    }
-    // Nueva semana
-    user.missionsWeek.weekId = currentWeekId;
-    user.missionsWeek.list = deepClone(WEEK_MISSIONS_TPL);
-  }
-};
 
-// Asegurar al cargar y cuando cambie la semana o el usuario actual
-useEffect(() => {
-  setEmployees(prev => {
-    const next = deepClone(prev);
-    const u = next[currentId];
-    if (u) {
-      ensureWeekForUser(u);
+  // Inicializa/cierra semana
+  const ensureWeekForUser = (user) => {
+    if (!user.missionsWeek) user.missionsWeek = { weekId: null, list: [], history: [] };
+    if (user.missionsWeek.weekId !== currentWeekId) {
+      // Cierre de semana anterior: calcula completadas y otorga bonus
+      if (user.missionsWeek.weekId) {
+        const completed = (user.missionsWeek.list || []).filter(m => m.progress >= m.target).length;
+        const closed = {
+          weekId: user.missionsWeek.weekId,
+          completed,
+          list: user.missionsWeek.list,
+          closedAt: new Date().toISOString(),
+          bonusGranted: completed >= WEEK_BONUS_MIN_COMPLETED
+        };
+        user.missionsWeek.history = Array.isArray(user.missionsWeek.history) ? user.missionsWeek.history : [];
+        user.missionsWeek.history.unshift(closed);
+        if (closed.bonusGranted) {
+          user.points = Math.max(0, user.points + WEEK_BONUS_POINTS);
+          user.level = Math.floor(user.points / 500) + 1;
+        }
+      }
+      // Nueva semana
+      user.missionsWeek.weekId = currentWeekId;
+      user.missionsWeek.list = deepClone(WEEK_MISSIONS_TPL);
     }
-    return next;
-  });
-  // Avisos
-  toast.dismiss();
-  toast("Nueva semana preparada", { icon: "🗓️" });
-}, [currentWeekId, currentId]);
+  };
+
+  // Asegurar al cargar y al cambiar semana/usuario
+  useEffect(() => {
+    setEmployees(prev => {
+      const next = deepClone(prev);
+      const u = next[currentId];
+      if (u) ensureWeekForUser(u);
+      return next;
+    });
+    toast.dismiss();
+    toast("Nueva semana preparada", { icon: "🗓️" });
+  }, [currentWeekId, currentId]);
 
   const pushKpiSnapshot = () =>
     mutate((u) => {
@@ -293,84 +291,84 @@ useEffect(() => {
       if (u.kpiHistory.length > 20) u.kpiHistory.shift();
     });
 
- const completeChallenge = async (id) => {
-  const reward = me.challenges.find((c) => c.id === id)?.reward || 0;
-  let completed = false;
+  const completeChallenge = async (id) => {
+    const reward = me.challenges.find((c) => c.id === id)?.reward || 0;
+    let completed = false;
 
-  mutate((u) => {
-    const c = u.challenges.find((x) => x.id === id);
-    if (!c) return;
+    mutate((u) => {
+      const c = u.challenges.find((x) => x.id === id);
+      if (!c) return;
 
-    // si aún no había meta/porcentaje, progresamos una unidad
-    if (c.progress == null) c.progress = 0;
-    if (c.target == null) c.target = 1;
+      if (c.progress == null) c.progress = 0;
+      if (c.target == null) c.target = 1;
 
-    if (c.progress >= c.target) return; // ya estaba completado
-    c.progress += 1;
+      if (c.progress >= c.target) return;
+      c.progress += 1;
 
-    if (c.progress >= c.target) {
-      c.status = "Completado";
-      completed = true;
+      if (c.progress >= c.target) {
+        c.status = "Completado";
+        completed = true;
 
-      // Impacto KPI
-      const inc = c.kpi === "ausentismo" ? -5 : 5;
-      u.kpis[c.kpi] = clamp(u.kpis[c.kpi] + inc, 0, 100);
-      u.kpis.cultura = clamp(u.kpis.cultura + 2, 0, 100);
+        // Impacto KPI
+        const inc = c.kpi === "ausentismo" ? -5 : 5;
+        u.kpis[c.kpi] = clamp(u.kpis[c.kpi] + inc, 0, 100);
+        u.kpis.cultura = clamp(u.kpis.cultura + 2, 0, 100);
 
-      // Insignia por innovación
-      if (c.kpi === "innovacion" && !u.badges.includes("b1")) u.badges.push("b1");
+        // Insignia por innovación
+        if (c.kpi === "innovacion" && !u.badges.includes("b1")) u.badges.push("b1");
+      } else {
+        c.status = "En progreso";
+      }
+    });
+
+    if (completed) {
+      await addPoints(reward);
+      pushKpiSnapshot();
+      toast.success("Reto completado");
     } else {
-      c.status = "En progreso";
+      toast("Progreso registrado");
     }
-  });
+  };
 
-  if (completed) {
-    await addPoints(reward);
-    pushKpiSnapshot();
-    toast.success("Reto completado");
-  } else {
-    toast("Progreso registrado");
-  }
-};
-const progressMission = async (missionId) => {
-  let completedNow = false;
-  setEmployees((prev) => {
-    const next = deepClone(prev);
-    const u = next[currentId];
-    ensureWeekForUser(u);
-    const m = u.missionsWeek.list.find((x) => x.id === missionId);
-    if (!m) return prev;
+  const progressMission = async (missionId) => {
+    let completedNow = false;
+    setEmployees((prev) => {
+      const next = deepClone(prev);
+      const u = next[currentId];
+      ensureWeekForUser(u);
+      const m = u.missionsWeek.list.find((x) => x.id === missionId);
+      if (!m) return prev;
 
-    if (m.auto) {
-      toast("Esta misión se evalúa automáticamente al cierre", { icon: "🤖" });
-      return prev;
-    }
+      if (m.auto) {
+        toast("Esta misión se evalúa automáticamente al cierre", { icon: "🤖" });
+        return prev;
+      }
 
-    if (m.progress >= m.target) return prev;
-    m.progress += 1;
+      if (m.progress >= m.target) return prev;
+      m.progress += 1;
 
-    if (m.progress >= m.target) {
-      m.status = "Completada";
-      completedNow = true;
-      const inc = m.kpi === "ausentismo" ? -3 : 3;
-      u.kpis[m.kpi] = clamp(u.kpis[m.kpi] + inc, 0, 100);
-      u.kpis.cultura = clamp(u.kpis.cultura + 1, 0, 100);
-      u.points = Math.max(0, u.points + (m.points || 0));
-      u.level = Math.floor(u.points / 500) + 1;
+      if (m.progress >= m.target) {
+        m.status = "Completada";
+        completedNow = true;
+        const inc = m.kpi === "ausentismo" ? -3 : 3;
+        u.kpis[m.kpi] = clamp(u.kpis[m.kpi] + inc, 0, 100);
+        u.kpis.cultura = clamp(u.kpis.cultura + 1, 0, 100);
+        u.points = Math.max(0, u.points + (m.points || 0));
+        u.level = Math.floor(u.points / 500) + 1;
+      } else {
+        m.status = "En progreso";
+      }
+      return next;
+    });
+
+    if (completedNow) {
+      toast.success("¡Misión completada!");
+      await shootConfetti();
+      pushKpiSnapshot();
     } else {
-      m.status = "En progreso";
+      toast("Progreso registrado");
     }
-    return next;
-  });
-
-  if (completedNow) {
-    toast.success("¡Misión completada!");
-    await shootConfetti();
-    pushKpiSnapshot();
-  } else {
-    toast("Progreso registrado");
-  }
-}; 
+  };
 
   const createChallenge = (payload) =>
     mutate((u) => {
@@ -388,10 +386,10 @@ const progressMission = async (missionId) => {
   const saveEvaluation = (payload) =>
     mutate((u) => {
       u.evaluations.push(payload);
-      // === AJUSTE: sensibilidad de evaluación -> KPI ===
+      // sensibilidad de evaluación -> KPI
       KPI_KEYS.forEach((k) => {
         const s = payload.scores[k] ?? 3;
-        let delta = (s - 3) * 4; // cambia "4" si quieres más/menos impacto
+        let delta = (s - 3) * 4; // ajustable
         if (k === "ausentismo") delta = -delta;
         u.kpis[k] = clamp(u.kpis[k] + delta, 0, 100);
       });
@@ -423,27 +421,25 @@ const progressMission = async (missionId) => {
     setEmployees((prev) => {
       const next = deepClone(prev);
       const u = next[currentId];
-      const now = new Date();
+      const nowD = new Date();
       const last = u.lastCheckIn ? new Date(u.lastCheckIn) : null;
 
-      if (isSameLocalDay(last, now)) {
+      if (isSameLocalDay(last, nowD)) {
         toast("Ya registraste tu check-in hoy", { icon: "📅" });
         return prev;
       }
-      // === AJUSTE: reglas de racha (ayer => +1; si no => 1)
-      if (isYesterdayLocal(last, now)) u.streak = (u.streak || 0) + 1;
+      if (isYesterdayLocal(last, nowD)) u.streak = (u.streak || 0) + 1;
       else u.streak = 1;
 
-      u.lastCheckIn = now.toISOString();
+      u.lastCheckIn = nowD.toISOString();
 
-      // === AJUSTE: recompensas por racha
-      let reward = 10;           // base diaria
+      // Recompensas por racha
+      let reward = 10;
       if (u.streak === 5) reward += 20;
       if (u.streak === 10) reward += 50;
       u.points = Math.max(0, u.points + reward);
       u.level = Math.floor(u.points / 500) + 1;
 
-      // === AJUSTE: umbral de badge "Constancia"
       if (u.streak >= 7 && !u.badges.includes("b5")) {
         u.badges.push("b5");
         toast.success("¡Logro desbloqueado: Constancia! 🔥");
@@ -500,8 +496,8 @@ const progressMission = async (missionId) => {
   // Datos de gráfica
   const chartData = useMemo(() => {
     const hist = Array.isArray(me.kpiHistory) ? me.kpiHistory : [];
-    const now = { ts: Date.now(), ...me.kpis };
-    const all = [...hist, now];
+    const nowP = { ts: Date.now(), ...me.kpis };
+    const all = [...hist, nowP];
     return all.slice(-10).map((d, i) => ({ name: `${i + 1}`, ...d }));
   }, [me.kpiHistory, me.kpis]);
 
@@ -555,8 +551,8 @@ const progressMission = async (missionId) => {
             { id: "evaluacion", label: "Evaluación" },
             { id: "sbi", label: "Feedback SBI" },
             { id: "analytics", label: "Analytics EPM" },
-            { id: "ranking", label: "Ranking" }, // NUEVO
-      { id: "misiones", label: "Misiones" },
+            { id: "ranking", label: "Ranking" },
+            { id: "misiones", label: "Misiones" },
           ].map((t) => (
             <button
               key={t.id}
@@ -806,18 +802,16 @@ const progressMission = async (missionId) => {
             <div className="text-xs text-gray-500 dark:text-gray-400">Conectar a datos reales vía API/Firebase cuando esté listo.</div>
           </section>
         )}
-{tab === "misiones" && (
-  <section className="p-5 bg-white dark:bg-gray-950 rounded-2xl border border-gray-200 dark:border-gray-800 space-y-4">
-    <WeeklyMissions
-      me={me}
-      now={now}
-      onProgress={progressMission}
-    />
-    <div className="text-xs text-gray-500 dark:text-gray-400">
-      Completa al menos {WEEK_BONUS_MIN_COMPLETED} misiones por semana para ganar un bonus de {WEEK_BONUS_POINTS} pts al cierre.
-    </div>
-  </section>
-)}
+
+        {/* Misiones */}
+        {tab === "misiones" && (
+          <section className="p-5 bg-white dark:bg-gray-950 rounded-2xl border border-gray-200 dark:border-gray-800 space-y-4">
+            <WeeklyMissions me={me} now={now} onProgress={progressMission} />
+            <div className="text-xs text-gray-500 dark:text-gray-400">
+              Completa al menos {WEEK_BONUS_MIN_COMPLETED} misiones por semana para ganar un bonus de {WEEK_BONUS_POINTS} pts al cierre.
+            </div>
+          </section>
+        )}
 
         {/* Ranking */}
         {tab === "ranking" && (
@@ -1101,4 +1095,5 @@ function WeeklyMissions({ me, now, onProgress }) {
     </div>
   );
 }
+
 
